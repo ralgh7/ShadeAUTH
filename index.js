@@ -61,18 +61,24 @@ app.post('/verify', async (req, res) => {
         );
 
         const licenseJson = await licenseResponse.json();
+        
+        // --- NEW DEBUGGING STEP ---
+        // This will print the full JSON response from KeyAuth to your server logs.
+        console.log("--- Full KeyAuth Response ---");
+        console.log(JSON.stringify(licenseJson, null, 2));
+        console.log("-----------------------------");
+
 
         if (licenseJson.success) {
             console.log(`KeyAuth SUCCESS for key: ${key}`);
 
-            // --- FIX: Safely check for the subscription object before accessing expiry ---
-            // If licenseJson.subscription exists, use its expiry. Otherwise, use null.
+            // This safety check will prevent the server from crashing in the meantime
             const expiryTimestamp = licenseJson.subscription ? licenseJson.subscription.expiry : null;
 
             return res.status(200).json({
                 status: 'success',
                 message: 'Key is valid.',
-                expiry: expiryTimestamp // This will be the timestamp or null for lifetime keys
+                expiry: expiryTimestamp 
             });
         } else {
             console.log(`KeyAuth FAILURE for key: ${key} - Reason: ${licenseJson.message}`);
@@ -80,7 +86,6 @@ app.post('/verify', async (req, res) => {
         }
 
     } catch (error) {
-        // This catch block was being triggered by the TypeError
         console.error('Error processing KeyAuth verification:', error);
         return res.status(500).json({ status: 'error', message: 'Server error while verifying key.' });
     }
