@@ -53,7 +53,7 @@ app.post('/verify', async (req, res) => {
         licenseParams.append('secret', KEYAUTH_APP_SECRET);
 
         const licenseResponse = await fetch(
-            'https://keyauth.win/api/1.1/', 
+            'https://keyauth.win/api/1.1/',
             {
                 method: 'POST',
                 body: licenseParams
@@ -64,11 +64,15 @@ app.post('/verify', async (req, res) => {
 
         if (licenseJson.success) {
             console.log(`KeyAuth SUCCESS for key: ${key}`);
-            // --- MODIFICATION: Send back the expiry timestamp ---
-            return res.status(200).json({ 
-                status: 'success', 
+
+            // --- FIX: Safely check for the subscription object before accessing expiry ---
+            // If licenseJson.subscription exists, use its expiry. Otherwise, use null.
+            const expiryTimestamp = licenseJson.subscription ? licenseJson.subscription.expiry : null;
+
+            return res.status(200).json({
+                status: 'success',
                 message: 'Key is valid.',
-                expiry: licenseJson.subscription.expiry // Extract the expiry timestamp
+                expiry: expiryTimestamp // This will be the timestamp or null for lifetime keys
             });
         } else {
             console.log(`KeyAuth FAILURE for key: ${key} - Reason: ${licenseJson.message}`);
@@ -76,7 +80,8 @@ app.post('/verify', async (req, res) => {
         }
 
     } catch (error) {
-        console.error('Error contacting KeyAuth API:', error);
+        // This catch block was being triggered by the TypeError
+        console.error('Error processing KeyAuth verification:', error);
         return res.status(500).json({ status: 'error', message: 'Server error while verifying key.' });
     }
 });
