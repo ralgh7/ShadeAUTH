@@ -61,19 +61,17 @@ app.post('/verify', async (req, res) => {
         );
 
         const licenseJson = await licenseResponse.json();
-        
-        // --- NEW DEBUGGING STEP ---
-        // This will print the full JSON response from KeyAuth to your server logs.
-        console.log("--- Full KeyAuth Response ---");
-        console.log(JSON.stringify(licenseJson, null, 2));
-        console.log("-----------------------------");
-
 
         if (licenseJson.success) {
             console.log(`KeyAuth SUCCESS for key: ${key}`);
 
-            // This safety check will prevent the server from crashing in the meantime
-            const expiryTimestamp = licenseJson.subscription ? licenseJson.subscription.expiry : null;
+            let expiryTimestamp = null;
+
+            // --- FIX: Use the correct path to get the expiry timestamp ---
+            // Safely check that 'info' and 'subscriptions' exist and the array is not empty.
+            if (licenseJson.info && licenseJson.info.subscriptions && licenseJson.info.subscriptions.length > 0) {
+                expiryTimestamp = licenseJson.info.subscriptions[0].expiry;
+            }
 
             return res.status(200).json({
                 status: 'success',
