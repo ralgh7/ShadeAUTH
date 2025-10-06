@@ -67,7 +67,17 @@ app.post('/verify', async (req, res) => {
         // Check the 'success' field from KeyAuth's final response
         if (licenseJson.success) {
             console.log(`KeyAuth SUCCESS for key: ${key}`);
-            return res.status(200).json({ status: 'success', message: licenseJson.message });
+            
+            // --- EDIT START: Send back the expiration info ---
+            // KeyAuth returns an array of subscriptions. We'll take the first one.
+            const subscriptionInfo = licenseJson.info.subscriptions[0];
+            return res.status(200).json({
+                status: 'success',
+                message: licenseJson.message,
+                expiry: subscriptionInfo.expiry // Pass the expiry timestamp back to the client
+            });
+            // --- EDIT END ---
+
         } else {
             // Key is invalid, expired, etc.
             console.log(`KeyAuth FAILURE for key: ${key} - Reason: ${licenseJson.message}`);
