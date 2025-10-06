@@ -5,11 +5,10 @@ const fetch = require('node-fetch');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// --- IMPORTANT: Your KeyAuth Credentials ---
-// For the best security, set these as Environment Variables on Render.
-const KEYAUTH_APP_NAME = process.env.KEYAUTH_APP_NAME || "YOUR_APP_NAME_HERE";
-const KEYAUTH_OWNER_ID = process.env.KEYAUTH_OWNER_ID || "YOUR_OWNER_ID_HERE";
-const KEYAUTH_APP_SECRET = process.env.KEYAUTH_APP_SECRET || "YOUR_APP_SECRET_HERE";
+// --- Your KeyAuth Credentials from Render Environment Variables ---
+const KEYAUTH_APP_NAME = process.env.KEYAUTH_APP_NAME;
+const KEYAUTH_OWNER_ID = process.env.KEYAUTH_OWNER_ID;
+const KEYAUTH_APP_SECRET = process.env.KEYAUTH_APP_SECRET;
 
 
 // Middleware
@@ -39,7 +38,6 @@ app.post('/verify', async (req, res) => {
 
         if (!initJson.success) {
             console.log(`KeyAuth INIT FAILED: ${initJson.message}`);
-            // Don't leak internal error messages; send a generic one to the client.
             return res.status(500).json({ status: 'error', message: 'Authentication server failed to initialize.' });
         }
 
@@ -49,7 +47,7 @@ app.post('/verify', async (req, res) => {
         const licenseParams = new URLSearchParams();
         licenseParams.append('type', 'license');
         licenseParams.append('key', key.trim());
-        licenseParams.append('sessionid', sessionId); // Include the session ID here
+        licenseParams.append('sessionid', sessionId);
         licenseParams.append('name', KEYAUTH_APP_NAME);
         licenseParams.append('ownerid', KEYAUTH_OWNER_ID);
         licenseParams.append('secret', KEYAUTH_APP_SECRET);
@@ -64,22 +62,11 @@ app.post('/verify', async (req, res) => {
 
         const licenseJson = await licenseResponse.json();
 
-        // Check the 'success' field from KeyAuth's final response
         if (licenseJson.success) {
             console.log(`KeyAuth SUCCESS for key: ${key}`);
-            
-            // --- EDIT START: Send back the expiration info ---
-            // KeyAuth returns an array of subscriptions. We'll take the first one.
-            const subscriptionInfo = licenseJson.info.subscriptions[0];
-            return res.status(200).json({
-                status: 'success',
-                message: licenseJson.message,
-                expiry: subscriptionInfo.expiry // Pass the expiry timestamp back to the client
-            });
-            // --- EDIT END ---
-
+            // --- REVERTED: Send a simple success message ---
+            return res.status(200).json({ status: 'success', message: 'Key is valid.' });
         } else {
-            // Key is invalid, expired, etc.
             console.log(`KeyAuth FAILURE for key: ${key} - Reason: ${licenseJson.message}`);
             return res.status(401).json({ status: 'error', message: licenseJson.message });
         }
