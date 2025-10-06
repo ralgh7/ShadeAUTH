@@ -64,8 +64,12 @@ app.post('/verify', async (req, res) => {
 
         if (licenseJson.success) {
             console.log(`KeyAuth SUCCESS for key: ${key}`);
-            // --- REVERTED: Send a simple success message ---
-            return res.status(200).json({ status: 'success', message: 'Key is valid.' });
+            // --- MODIFICATION: Send back the expiry timestamp ---
+            return res.status(200).json({ 
+                status: 'success', 
+                message: 'Key is valid.',
+                expiry: licenseJson.subscription.expiry // Extract the expiry timestamp
+            });
         } else {
             console.log(`KeyAuth FAILURE for key: ${key} - Reason: ${licenseJson.message}`);
             return res.status(401).json({ status: 'error', message: licenseJson.message });
@@ -80,4 +84,3 @@ app.post('/verify', async (req, res) => {
 app.listen(PORT, () => {
     console.log(`KeyAuth proxy server running on port ${PORT}`);
 });
-
