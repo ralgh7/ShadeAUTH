@@ -28,7 +28,6 @@ app.post('/verify', async (req, res) => {
         // Step 1: Initialize a session with KeyAuth to get a session ID.
         const initParams = new URLSearchParams();
         initParams.append('type', 'init');
-        initParams.append('ver', '1.1'); // It's good practice to include the API version
         initParams.append('name', KEYAUTH_APP_NAME);
         initParams.append('ownerid', KEYAUTH_OWNER_ID);
 
