@@ -24,34 +24,55 @@ app.post('/verify', async (req, res) => {
         return res.status(400).json({ status: 'error', message: 'No key provided.' });
     }
 
-    // Prepare data to be sent to the KeyAuth API
-    // Using URLSearchParams automatically formats it correctly
-    const params = new URLSearchParams();
-    params.append('type', 'license');
-    params.append('key', key.trim());
-    params.append('name', KEYAUTH_APP_NAME);
-    params.append('ownerid', KEYAUTH_OWNER_ID);
-    params.append('secret', KEYAUTH_APP_SECRET);
-
     try {
-        const apiResponse = await fetch(
+        // Step 1: Initialize a session with KeyAuth to get a session ID.
+        const initParams = new URLSearchParams();
+        initParams.append('type', 'init');
+        initParams.append('ver', '1.1'); // It's good practice to include the API version
+        initParams.append('name', KEYAUTH_APP_NAME);
+        initParams.append('ownerid', KEYAUTH_OWNER_ID);
+
+        const initResponse = await fetch('https://keyauth.win/api/1.1/', {
+            method: 'POST',
+            body: initParams
+        });
+        const initJson = await initResponse.json();
+
+        if (!initJson.success) {
+            console.log(`KeyAuth INIT FAILED: ${initJson.message}`);
+            // Don't leak internal error messages; send a generic one to the client.
+            return res.status(500).json({ status: 'error', message: 'Authentication server failed to initialize.' });
+        }
+
+        const sessionId = initJson.sessionid;
+
+        // Step 2: Use the new session ID to validate the user's license key.
+        const licenseParams = new URLSearchParams();
+        licenseParams.append('type', 'license');
+        licenseParams.append('key', key.trim());
+        licenseParams.append('sessionid', sessionId); // Include the session ID here
+        licenseParams.append('name', KEYAUTH_APP_NAME);
+        licenseParams.append('ownerid', KEYAUTH_OWNER_ID);
+        licenseParams.append('secret', KEYAUTH_APP_SECRET);
+
+        const licenseResponse = await fetch(
             'https://keyauth.win/api/1.1/', 
             {
                 method: 'POST',
-                body: params
+                body: licenseParams
             }
         );
 
-        const responseJson = await apiResponse.json();
+        const licenseJson = await licenseResponse.json();
 
-        // Check the 'success' field from KeyAuth's response
-        if (responseJson.success) {
+        // Check the 'success' field from KeyAuth's final response
+        if (licenseJson.success) {
             console.log(`KeyAuth SUCCESS for key: ${key}`);
-            return res.status(200).json({ status: 'success', message: responseJson.message });
+            return res.status(200).json({ status: 'success', message: licenseJson.message });
         } else {
             // Key is invalid, expired, etc.
-            console.log(`KeyAuth FAILURE for key: ${key} - Reason: ${responseJson.message}`);
-            return res.status(401).json({ status: 'error', message: responseJson.message });
+            console.log(`KeyAuth FAILURE for key: ${key} - Reason: ${licenseJson.message}`);
+            return res.status(401).json({ status: 'error', message: licenseJson.message });
         }
 
     } catch (error) {
