@@ -60,7 +60,19 @@ app.post('/verify', async (req, res) => {
             }
         );
 
-        const licenseJson = await licenseResponse.json();
+        const responseText = await licenseResponse.text();
+        let licenseJson;
+
+        try {
+            // Try to parse the text as JSON
+            licenseJson = JSON.parse(responseText);
+        } catch (e) {
+            // If parsing fails, it's a plain text error from KeyAuth
+            console.log(`KeyAuth verification failed with a non-JSON response: ${responseText}`);
+            // Return the raw error message from KeyAuth to the client
+            return res.status(401).json({ status: 'error', message: responseText });
+        }
+
 
         if (licenseJson.success) {
             console.log(`KeyAuth SUCCESS for key: ${key}`);
