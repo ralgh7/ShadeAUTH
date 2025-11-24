@@ -12,14 +12,19 @@ const KEYAUTH_APP_NAME = process.env.KEYAUTH_APP_NAME;
 const KEYAUTH_OWNER_ID = process.env.KEYAUTH_OWNER_ID;
 const KEYAUTH_APP_SECRET = process.env.KEYAUTH_APP_SECRET;
 
+// --- === NEW: DEFINE YOUR SECRET DATA HERE === ---
+// Load these from environment variables for best security
+// This is the key your C++ loader uses to decrypt your C# mod.
+const DECRYPTION_KEY = process.env.DECRYPTION_KEY || "your-super-secret-key-12345";
+// This is the URL where your WinForm app will download the Loader.dll
+const LOADER_URL = process.env.LOADER_URL || "https://shadeauth.onrender.com/Loader.dll";
+// --- === END OF NEW DATA === ---
+
 // --- Session Management ---
-// This will store { token -> sessionInfo }
 const activeSessions = new Map();
-// Sessions will be invalid if no heartbeat is received for 2 minutes
 const SESSION_TIMEOUT_MS = 2 * 60 * 1000; 
 
 // --- Rate Limiter ---
-// Allow only 10 login attempts per IP per minute
 const verifyLimiter = rateLimit({
 	windowMs: 60 * 1000, // 1 minute
 	max: 10, 
@@ -92,12 +97,17 @@ app.post('/verify', verifyLimiter, async (req, res) => {
 
             console.log(`Issued session token: ${sessionToken.substring(0, 8)}...`);
 
+            // --- === NEW: RETURN ALL DATA TO THE CLIENT === ---
             return res.status(200).json({
                 status: 'success',
                 message: 'Key is valid.',
                 expiry: expiryTimestamp,
-                token: sessionToken // <-- Critical part: return the token
+                token: sessionToken,
+                decryptionKey: DECRYPTION_KEY, // <-- Send the dynamic key
+                loaderUrl: LOADER_URL          // <-- Send the download URL
             });
+            // --- === END OF CHANGE === ---
+
         } else {
             console.log(`KeyAuth FAILURE for key: ${key} - Reason: ${licenseJson.message}`);
             return res.status(401).json({ status: 'error', message: licenseJson.message });
@@ -131,7 +141,6 @@ app.post('/heartbeat', (req, res) => {
 });
 
 // --- Session Cleanup ---
-// Runs every 30 seconds to remove sessions that haven't sent a heartbeat
 setInterval(() => {
     const now = Date.now();
     let cleaned = 0;
