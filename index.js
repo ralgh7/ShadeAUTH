@@ -179,17 +179,25 @@ app.post('/heartbeat', (req, res) => {
     }
 
     if (activeSessions.has(token)) {
-        // Valid token. Update its last heartbeat time.
+        // 1. Update the last heartbeat timestamp
         const session = activeSessions.get(token);
         session.lastHeartbeat = Date.now();
         activeSessions.set(token, session);
         
-        // --- NEW ENTANGLEMENT (This is for Phase 4) ---
-        const oneTimeData = crypto.randomBytes(8).toString('hex');
+        // --- NEW SECURITY LOGIC: The "Magic Number" Trap ---
+        // We generate a random number, but force it to be a multiple of 7.
+        // The Client will check: (magic % 7 == 0).
+        
+        // Generate a random multiplier between 100 and 99999
+        const multiplier = Math.floor(Math.random() * 90000) + 100;
+        
+        // The Magic Number is the multiplier times 7
+        // Example: If multiplier is 10, magic is 70.
+        const magicValue = multiplier * 7; 
 
         return res.status(200).json({ 
             status: 'ok', 
-            oneTimeData: oneTimeData // <-- Send new data
+            magic: magicValue // <-- Send this signal to the client
         });
 
     } else {
