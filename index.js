@@ -178,20 +178,20 @@ app.post('/heartbeat', (req, res) => {
         activeSessions.set(token, session);
         
         // --- NEW SECURITY LOGIC: Time-Based Trap ---
-        // We send the current UTC Minute (0-59).
-        // The C# client checks if this matches its local clock.
         const currentMinute = new Date().getUTCMinutes();
+
+        // --- LOGGING ADDED HERE ---
+        console.log(`[Heartbeat] Token: ${token.substring(0, 6)}... | Sending UTC Minute: ${currentMinute}`);
 
         return res.status(200).json({ 
             status: 'ok', 
-            magic: currentMinute // <-- CRITICAL FIX: Send Minute, not Multiple of 7
+            magic: currentMinute 
         });
 
     } else {
         return res.status(401).json({ status: 'error', message: 'Invalid or expired session.' });
     }
 });
-
 // --- Session Cleanup ---
 setInterval(() => {
     const now = Date.now();
