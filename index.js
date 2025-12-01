@@ -3,7 +3,7 @@ const cors = require('cors');
 const fetch = require('node-fetch');
 const crypto = require('crypto'); // For generating secure tokens
 const rateLimit = require('express-rate-limit'); // For security
-const path = require('path'); // <-- We still need this
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -13,25 +13,30 @@ const KEYAUTH_APP_NAME = process.env.KEYAUTH_APP_NAME;
 const KEYAUTH_OWNER_ID = process.env.KEYAUTH_OWNER_ID;
 const KEYAUTH_APP_SECRET = process.env.KEYAUTH_APP_SECRET;
 
-// --- === NEW: DEFINE YOUR SECRET DATA HERE === ---
-const DECRYPTION_KEY = process.env.DECRYPTION_KEY || "your-super-secret-key-12345";
-// --- NEW: This is the *path* to the file, not the URL ---
-const LOADER_FILE_NAME = "Loader.dll";
-const LOADER_FILE_PATH = path.join(__dirname, LOADER_FILE_NAME); // Assumes Loader.dll is in the same folder as server.js
-// --- === END OF NEW DATA === ---
+// --- === SECURITY CONFIGURATION === ---
+// IMPORTANT: This should be the PARTIAL key. 
+// If your C++ Salt is "SHADE_V1", and you want the full key to be "MYKEYSHADE_V1",
+// then this variable should just be "MYKEY".
+const DECRYPTION_KEY = process.env.DECRYPTION_KEY || "PARTIAL_KEY_HERE";
+
+// This is the actual file on the server disk. 
+// Ensure your VMProtected DLL is renamed to 'Loader.dll' and uploaded to the root folder.
+const LOADER_FILE_NAME = "Loader.dll"; 
+const LOADER_FILE_PATH = path.join(__dirname, LOADER_FILE_NAME); 
+// --- === END CONFIG === ---
 
 // --- Session Management ---
 const activeSessions = new Map();
 const SESSION_TIMEOUT_MS = 2 * 60 * 1000; 
-// --- NEW: Map to store one-time download tokens ---
+// Map to store one-time download tokens
 const downloadTokens = new Map();
 const DOWNLOAD_TOKEN_TIMEOUT_MS = 60 * 1000; // 1 minute
 
 // --- Rate Limiter ---
 const verifyLimiter = rateLimit({
-	windowMs: 60 * 1000, // 1 minute
-	max: 10, 
-	message: { status: 'error', message: 'Too many login attempts. Please try again in a minute.' },
+    windowMs: 60 * 1000, // 1 minute
+    max: 10, 
+    message: { status: 'error', message: 'Too many login attempts. Please try again in a minute.' },
     standardHeaders: true,
     legacyHeaders: false,
 });
@@ -39,11 +44,6 @@ const verifyLimiter = rateLimit({
 // Middleware
 app.use(cors());
 app.use(express.json());
-
-// --- REMOVED ---
-// We no longer want a public static folder
-// app.use(express.static(path.join(__dirname, 'public')));
-// ---
 
 // --- /verify Endpoint (Rate Limited) ---
 app.post('/verify', verifyLimiter, async (req, res) => {
@@ -76,8 +76,9 @@ app.post('/verify', verifyLimiter, async (req, res) => {
         licenseParams.append('ownerid', KEYAUTH_OWNER_ID);
         licenseParams.append('secret', KEYAUTH_APP_SECRET);
         const licenseResponse = await fetch('https://keyauth.win/api/1.1/', { method: 'POST', body: licenseParams });
-        const responseText = await licenseResponse.text();
         
+        // Handle non-JSON responses gracefully
+        const responseText = await licenseResponse.text();
         let licenseJson;
         try {
             licenseJson = JSON.parse(responseText);
@@ -102,24 +103,23 @@ app.post('/verify', verifyLimiter, async (req, res) => {
             });
             console.log(`Issued session token: ${sessionToken.substring(0, 8)}...`);
             
-            // --- NEW: Generate a one-time download token ---
+            // --- Generate a one-time download token ---
             const downloadToken = crypto.randomBytes(32).toString('hex');
             downloadTokens.set(downloadToken, {
                 timestamp: Date.now()
             });
-            // Construct the full URL to send to the client
+            
+            // Construct the one-time URL
             const fullLoaderUrl = `https://shadeauth.onrender.com/download/${downloadToken}`;
 
-            // --- === RETURN ALL DATA TO THE CLIENT === ---
             return res.status(200).json({
                 status: 'success',
                 message: 'Key is valid.',
                 expiry: expiryTimestamp,
                 token: sessionToken,
-                decryptionKey: DECRYPTION_KEY, // <-- Send the dynamic key
-                loaderUrl: fullLoaderUrl        // <-- Send the NEW one-time URL
+                decryptionKey: DECRYPTION_KEY, // Sending PARTIAL key
+                loaderUrl: fullLoaderUrl        // Sending One-Time URL
             });
-            // --- === END OF CHANGE === ---
 
         } else {
             console.log(`KeyAuth FAILURE for key: ${key} - Reason: ${licenseJson.message}`);
@@ -132,7 +132,7 @@ app.post('/verify', verifyLimiter, async (req, res) => {
     }
 });
 
-// --- NEW: SECURE DOWNLOAD ENDPOINT ---
+// --- SECURE DOWNLOAD ENDPOINT ---
 app.get('/download/:token', (req, res) => {
     const { token } = req.params;
 
@@ -140,35 +140,28 @@ app.get('/download/:token', (req, res) => {
         return res.status(400).json({ status: 'error', message: 'No token provided.' });
     }
 
-    // Check if the one-time token is valid
     if (downloadTokens.has(token)) {
         const tokenData = downloadTokens.get(token);
         
-        // --- ONE-TIME-USE: Delete the token immediately ---
+        // --- ONE-TIME-USE: Delete immediately ---
         downloadTokens.delete(token); 
 
-        // Optional: Check if token is expired (e.g., 1 minute)
+        // Check expiry (1 minute)
         if (Date.now() - tokenData.timestamp > DOWNLOAD_TOKEN_TIMEOUT_MS) {
-            console.log("Download token expired.");
             return res.status(401).json({ status: 'error', message: 'Download link expired.' });
         }
 
-        // Token is valid, send the file
-        console.log("Valid download token presented. Sending file...");
-        res.download(LOADER_FILE_PATH, LOADER_FILE_NAME, (err) => {
+        // Send the VMProtected DLL
+        res.download(LOADER_FILE_PATH, "audio_driver.dll", (err) => {
             if (err) {
                 console.error(`File send error: ${err.message}`);
-                // res.status(500).json({ status: 'error', message: 'Error sending file.' });
             }
         });
 
     } else {
-        // Token is invalid or has already been used
-        console.log("Invalid or used download token.");
-        return res.status(404).json({ status: 'error', message: 'Invalid download link.' });
+        return res.status(404).json({ status: 'error', message: 'Invalid or used download link.' });
     }
 });
-// --- END OF NEW ENDPOINT ---
 
 // --- /heartbeat Endpoint ---
 app.post('/heartbeat', (req, res) => {
@@ -179,29 +172,22 @@ app.post('/heartbeat', (req, res) => {
     }
 
     if (activeSessions.has(token)) {
-        // 1. Update the last heartbeat timestamp
+        // Update last heartbeat
         const session = activeSessions.get(token);
         session.lastHeartbeat = Date.now();
         activeSessions.set(token, session);
         
-        // --- NEW SECURITY LOGIC: The "Magic Number" Trap ---
-        // We generate a random number, but force it to be a multiple of 7.
-        // The Client will check: (magic % 7 == 0).
-        
-        // Generate a random multiplier between 100 and 99999
-        const multiplier = Math.floor(Math.random() * 90000) + 100;
-        
-        // The Magic Number is the multiplier times 7
-        // Example: If multiplier is 10, magic is 70.
-        const magicValue = multiplier * 7; 
+        // --- NEW SECURITY LOGIC: Time-Based Trap ---
+        // We send the current UTC Minute (0-59).
+        // The C# client checks if this matches its local clock.
+        const currentMinute = new Date().getUTCMinutes();
 
         return res.status(200).json({ 
             status: 'ok', 
-            magic: magicValue // <-- Send this signal to the client
+            magic: currentMinute // <-- CRITICAL FIX: Send Minute, not Multiple of 7
         });
 
     } else {
-        // Invalid or expired token. Tell the mod to eject.
         return res.status(401).json({ status: 'error', message: 'Invalid or expired session.' });
     }
 });
@@ -216,23 +202,14 @@ setInterval(() => {
             cleanedSessions++;
         }
     }
-    if (cleanedSessions > 0) {
-        console.log(`Cleaned up ${cleanedSessions} expired sessions.`);
-    }
-
-    // --- NEW: Clean up expired download tokens ---
-    let cleanedDownloads = 0;
+    
+    // Clean up expired download tokens
     for (const [token, data] of downloadTokens.entries()) {
         if (now - data.timestamp > DOWNLOAD_TOKEN_TIMEOUT_MS) {
             downloadTokens.delete(token);
-            cleanedDownloads++;
         }
     }
-    if (cleanedDownloads > 0) {
-        console.log(`Cleaned up ${cleanedDownloads} expired download tokens.`);
-    }
-
-}, 30 * 1000); // Run every 30 seconds
+}, 30 * 1000);
 
 app.listen(PORT, () => {
     console.log(`KeyAuth proxy server running on port ${PORT}`);
