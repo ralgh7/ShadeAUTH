@@ -15,14 +15,22 @@ const KEYAUTH_APP_SECRET = process.env.KEYAUTH_APP_SECRET;
 
 // --- === SECURITY CONFIGURATION === ---
 // IMPORTANT: This should be the PARTIAL key. 
-// If your C++ Salt is "SHADE_V1", and you want the full key to be "MYKEYSHADE_V1",
-// then this variable should just be "MYKEY".
 const DECRYPTION_KEY = process.env.DECRYPTION_KEY || "PARTIAL_KEY_HERE";
 
 // This is the actual file on the server disk. 
-// Ensure your VMProtected DLL is renamed to 'Loader.dll' and uploaded to the root folder.
 const LOADER_FILE_NAME = "Loader.dll"; 
 const LOADER_FILE_PATH = path.join(__dirname, LOADER_FILE_NAME); 
+
+// --- === SERVER SIDE VARIABLES (SSV) CONFIG === ---
+// This is your remote control. 
+// 1.0 = Feature ON (Normal Math). 
+// 0.0 = Feature OFF (Math multiplies by zero, breaking the logic).
+const SSV_CONFIG = {
+    v1: 1.0,   // SpeedBoost Factor
+    v2: 1.0,   // Velmax Factor
+    v3: 2.75,  // Quest Menu Distance (Meters)
+    v4: 1.0    // Pull Mod Factor
+};
 // --- === END CONFIG === ---
 
 // --- Session Management ---
@@ -127,7 +135,15 @@ app.post('/verify', verifyLimiter, async (req, res) => {
                 expiry: expiryTimestamp,
                 token: sessionToken,
                 decryptionKey: DECRYPTION_KEY, // Sending PARTIAL key
-                loaderUrl: fullLoaderUrl        // Sending One-Time URL
+                loaderUrl: fullLoaderUrl,       // Sending One-Time URL
+
+                // --- ADDED: Send SSV Data on Initial Login ---
+                // This ensures the mod works instantly without waiting for first heartbeat
+                magic: new Date().getUTCMinutes(),
+                v1: SSV_CONFIG.v1,
+                v2: SSV_CONFIG.v2,
+                v3: SSV_CONFIG.v3,
+                v4: SSV_CONFIG.v4
             });
 
         } else {
@@ -190,17 +206,24 @@ app.post('/heartbeat', (req, res) => {
         const currentMinute = new Date().getUTCMinutes();
 
         // --- LOGGING ADDED HERE ---
-        console.log(`[Heartbeat] Token: ${token.substring(0, 6)}... | Sending UTC Minute: ${currentMinute}`);
+        // console.log(`[Heartbeat] Token: ${token.substring(0, 6)}...`);
 
         return res.status(200).json({ 
             status: 'ok', 
-            magic: currentMinute 
+            magic: currentMinute,
+            
+            // --- ADDED: Send SSV Data on Heartbeat ---
+            v1: SSV_CONFIG.v1,
+            v2: SSV_CONFIG.v2,
+            v3: SSV_CONFIG.v3,
+            v4: SSV_CONFIG.v4
         });
 
     } else {
         return res.status(401).json({ status: 'error', message: 'Invalid or expired session.' });
     }
 });
+
 // --- Session Cleanup ---
 setInterval(() => {
     const now = Date.now();
