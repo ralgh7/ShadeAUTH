@@ -43,7 +43,16 @@ const verifyLimiter = rateLimit({
 
 // Middleware
 app.use(cors());
+app.set('trust proxy', 1);
 app.use(express.json());
+// Add this AFTER app.use(express.json());
+app.use((err, req, res, next) => {
+    if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+        console.error('Bad JSON Received:', err.message);
+        return res.status(400).send({ status: 'error', message: 'Invalid JSON' });
+    }
+    next();
+});
 
 // --- /verify Endpoint (Rate Limited) ---
 app.post('/verify', verifyLimiter, async (req, res) => {
