@@ -1,59 +1,50 @@
 const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
-const crypto = require('crypto'); // For generating secure tokens
-const rateLimit = require('express-rate-limit'); // For security
+const crypto = require('crypto'); 
+const rateLimit = require('express-rate-limit'); 
 const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// --- Your KeyAuth Credentials from Render Environment Variables ---
+// --- Your KeyAuth Credentials ---
 const KEYAUTH_APP_NAME = process.env.KEYAUTH_APP_NAME;
 const KEYAUTH_OWNER_ID = process.env.KEYAUTH_OWNER_ID;
 const KEYAUTH_APP_SECRET = process.env.KEYAUTH_APP_SECRET;
 
-// --- === SECURITY CONFIGURATION === ---
-// IMPORTANT: This should be the PARTIAL key. 
+// --- Security Config ---
 const DECRYPTION_KEY = process.env.DECRYPTION_KEY || "PARTIAL_KEY_HERE";
-
-// This is the actual file on the server disk. 
 const LOADER_FILE_NAME = "Loader.dll"; 
 const LOADER_FILE_PATH = path.join(__dirname, LOADER_FILE_NAME); 
 
-// --- === SERVER SIDE VARIABLES (SSV) CONFIG === ---
-// This is your remote control. 
-// 1.0 = Feature ON (Normal Math). 
-// 0.0 = Feature OFF (Math multiplies by zero, breaking the logic).
+// --- Server Side Variables (SSV) ---
 const SSV_CONFIG = {
-    v1: 1.0,   // SpeedBoost Factor
-    v2: 1.0,   // Velmax Factor
-    v3: 2.75,  // Quest Menu Distance (Meters)
-    v4: 1.0    // Pull Mod Factor
+    v1: 1.0,   // Speed
+    v2: 1.0,   // Velmax
+    v3: 2.75,  // Menu Dist
+    v4: 1.0    // Pull
 };
-// --- === END CONFIG === ---
 
-// --- Session Management ---
+// --- State ---
 const activeSessions = new Map();
 const SESSION_TIMEOUT_MS = 2 * 60 * 1000; 
-// Map to store one-time download tokens
 const downloadTokens = new Map();
-const DOWNLOAD_TOKEN_TIMEOUT_MS = 60 * 1000; // 1 minute
+const DOWNLOAD_TOKEN_TIMEOUT_MS = 60 * 1000; 
 
-// --- Rate Limiter ---
+// --- Rate Limiting ---
 const verifyLimiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
+    windowMs: 60 * 1000, 
     max: 10, 
-    message: { status: 'error', message: 'Too many login attempts. Please try again in a minute.' },
+    message: { status: 'error', message: 'Too many login attempts.' },
     standardHeaders: true,
     legacyHeaders: false,
 });
 
-// Middleware
+// --- Middleware ---
 app.use(cors());
 app.set('trust proxy', 1);
 app.use(express.json());
-// Add this AFTER app.use(express.json());
 app.use((err, req, res, next) => {
     if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
         console.error('Bad JSON Received:', err.message);
@@ -62,29 +53,35 @@ app.use((err, req, res, next) => {
     next();
 });
 
-// --- /verify Endpoint (Rate Limited) ---
+// --- === ENCRYPTION HELPER === ---
+function xorEncrypt(text, key) {
+    if (!key) return text;
+    let result = [];
+    for (let i = 0; i < text.length; i++) {
+        result.push(text.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+    }
+    return Buffer.from(result).toString('base64');
+}
+
+// --- /verify Endpoint ---
 app.post('/verify', verifyLimiter, async (req, res) => {
     const { key } = req.body;
 
-    if (!key) {
-        return res.status(400).json({ status: 'error', message: 'No key provided.' });
-    }
+    if (!key) return res.status(400).json({ status: 'error', message: 'No key provided.' });
 
     try {
-        // Step 1: Initialize a session with KeyAuth
+        // 1. Init
         const initParams = new URLSearchParams();
         initParams.append('type', 'init');
         initParams.append('name', KEYAUTH_APP_NAME);
         initParams.append('ownerid', KEYAUTH_OWNER_ID);
         const initResponse = await fetch('https://keyauth.win/api/1.1/', { method: 'POST', body: initParams });
         const initJson = await initResponse.json();
-        if (!initJson.success) {
-            console.log(`KeyAuth INIT FAILED: ${initJson.message}`);
-            return res.status(500).json({ status: 'error', message: 'Auth server init failed.' });
-        }
+        
+        if (!initJson.success) return res.status(500).json({ status: 'error', message: 'Auth server init failed.' });
+        
+        // 2. Verify
         const sessionId = initJson.sessionid;
-
-        // Step 2: Validate the license key
         const licenseParams = new URLSearchParams();
         licenseParams.append('type', 'license');
         licenseParams.append('key', key.trim());
@@ -94,15 +91,9 @@ app.post('/verify', verifyLimiter, async (req, res) => {
         licenseParams.append('secret', KEYAUTH_APP_SECRET);
         const licenseResponse = await fetch('https://keyauth.win/api/1.1/', { method: 'POST', body: licenseParams });
         
-        // Handle non-JSON responses gracefully
         const responseText = await licenseResponse.text();
         let licenseJson;
-        try {
-            licenseJson = JSON.parse(responseText);
-        } catch (e) {
-            console.log(`KeyAuth verification failed with a non-JSON response: ${responseText}`);
-            return res.status(401).json({ status: 'error', message: responseText });
-        }
+        try { licenseJson = JSON.parse(responseText); } catch (e) { return res.status(401).json({ status: 'error', message: responseText }); }
 
         if (licenseJson.success) {
             console.log(`KeyAuth SUCCESS for key: ${key}`);
@@ -111,34 +102,27 @@ app.post('/verify', verifyLimiter, async (req, res) => {
                 expiryTimestamp = licenseJson.info.subscriptions[0].expiry;
             }
 
-            // --- Generate and store a secure session token ---
+            // Generate Session Token
             const sessionToken = crypto.randomBytes(32).toString('hex');
             activeSessions.set(sessionToken, {
                 key: key,
                 expiry: expiryTimestamp,
                 lastHeartbeat: Date.now()
             });
-            console.log(`Issued session token: ${sessionToken.substring(0, 8)}...`);
             
-            // --- Generate a one-time download token ---
+            // Generate One-Time Download Token
             const downloadToken = crypto.randomBytes(32).toString('hex');
-            downloadTokens.set(downloadToken, {
-                timestamp: Date.now()
-            });
-            
-            // Construct the one-time URL
+            downloadTokens.set(downloadToken, { timestamp: Date.now() });
             const fullLoaderUrl = `https://shadeauth.onrender.com/download/${downloadToken}`;
 
+            // Return Plain JSON for Initial Handshake (Reliability)
             return res.status(200).json({
                 status: 'success',
                 message: 'Key is valid.',
                 expiry: expiryTimestamp,
                 token: sessionToken,
-                decryptionKey: DECRYPTION_KEY, // Sending PARTIAL key
-                loaderUrl: fullLoaderUrl,       // Sending One-Time URL
-
-                // --- ADDED: Send SSV Data on Initial Login ---
-                // This ensures the mod works instantly without waiting for first heartbeat
+                decryptionKey: DECRYPTION_KEY,
+                loaderUrl: fullLoaderUrl,
                 magic: new Date().getUTCMinutes(),
                 v1: SSV_CONFIG.v1,
                 v2: SSV_CONFIG.v2,
@@ -147,102 +131,77 @@ app.post('/verify', verifyLimiter, async (req, res) => {
             });
 
         } else {
-            console.log(`KeyAuth FAILURE for key: ${key} - Reason: ${licenseJson.message}`);
             return res.status(401).json({ status: 'error', message: licenseJson.message });
         }
 
     } catch (error) {
         console.error('Error processing KeyAuth verification:', error);
-        return res.status(500).json({ status: 'error', message: 'Server error while verifying key.' });
+        return res.status(500).json({ status: 'error', message: 'Server error.' });
     }
 });
 
-// --- SECURE DOWNLOAD ENDPOINT ---
+// --- /download Endpoint ---
 app.get('/download/:token', (req, res) => {
     const { token } = req.params;
-
-    if (!token) {
-        return res.status(400).json({ status: 'error', message: 'No token provided.' });
-    }
+    if (!token) return res.status(400).json({ status: 'error', message: 'No token.' });
 
     if (downloadTokens.has(token)) {
         const tokenData = downloadTokens.get(token);
-        
-        // --- ONE-TIME-USE: Delete immediately ---
-        downloadTokens.delete(token); 
+        downloadTokens.delete(token); // One-time use
 
-        // Check expiry (1 minute)
         if (Date.now() - tokenData.timestamp > DOWNLOAD_TOKEN_TIMEOUT_MS) {
-            return res.status(401).json({ status: 'error', message: 'Download link expired.' });
+            return res.status(401).json({ status: 'error', message: 'Expired.' });
         }
 
-        // Send the VMProtected DLL
         res.download(LOADER_FILE_PATH, "audio_driver.dll", (err) => {
-            if (err) {
-                console.error(`File send error: ${err.message}`);
-            }
+            if (err) console.error(`File send error: ${err.message}`);
         });
-
     } else {
-        return res.status(404).json({ status: 'error', message: 'Invalid or used download link.' });
+        return res.status(404).json({ status: 'error', message: 'Invalid link.' });
     }
 });
 
-// --- /heartbeat Endpoint ---
+// --- /heartbeat Endpoint (ENCRYPTED) ---
 app.post('/heartbeat', (req, res) => {
     const { token } = req.body;
 
-    if (!token) {
-        return res.status(400).json({ status: 'error', message: 'No token.' });
+    if (!token || !activeSessions.has(token)) {
+        // Return Plain JSON on error so client knows what happened
+        return res.status(401).json({ status: 'error', message: 'Invalid session.' });
     }
 
-    if (activeSessions.has(token)) {
-        // Update last heartbeat
-        const session = activeSessions.get(token);
-        session.lastHeartbeat = Date.now();
-        activeSessions.set(token, session);
-        
-        // --- NEW SECURITY LOGIC: Time-Based Trap ---
-        const currentMinute = new Date().getUTCMinutes();
+    const session = activeSessions.get(token);
+    session.lastHeartbeat = Date.now();
+    activeSessions.set(token, session);
+    
+    const payload = { 
+        status: 'ok', 
+        magic: new Date().getUTCMinutes(),
+        v1: SSV_CONFIG.v1,
+        v2: SSV_CONFIG.v2,
+        v3: SSV_CONFIG.v3,
+        v4: SSV_CONFIG.v4
+    };
 
-        // --- LOGGING ADDED HERE ---
-        // console.log(`[Heartbeat] Token: ${token.substring(0, 6)}...`);
+    // Encrypt response using the Session Token as the Key
+    const jsonString = JSON.stringify(payload);
+    const encryptedString = xorEncrypt(jsonString, token);
 
-        return res.status(200).json({ 
-            status: 'ok', 
-            magic: currentMinute,
-            
-            // --- ADDED: Send SSV Data on Heartbeat ---
-            v1: SSV_CONFIG.v1,
-            v2: SSV_CONFIG.v2,
-            v3: SSV_CONFIG.v3,
-            v4: SSV_CONFIG.v4
-        });
-
-    } else {
-        return res.status(401).json({ status: 'error', message: 'Invalid or expired session.' });
-    }
+    // Send RAW STRING (Base64)
+    return res.send(encryptedString); 
 });
 
-// --- Session Cleanup ---
+// --- Cleanup Interval ---
 setInterval(() => {
     const now = Date.now();
-    let cleanedSessions = 0;
     for (const [token, session] of activeSessions.entries()) {
-        if (now - session.lastHeartbeat > SESSION_TIMEOUT_MS) {
-            activeSessions.delete(token);
-            cleanedSessions++;
-        }
+        if (now - session.lastHeartbeat > SESSION_TIMEOUT_MS) activeSessions.delete(token);
     }
-    
-    // Clean up expired download tokens
     for (const [token, data] of downloadTokens.entries()) {
-        if (now - data.timestamp > DOWNLOAD_TOKEN_TIMEOUT_MS) {
-            downloadTokens.delete(token);
-        }
+        if (now - data.timestamp > DOWNLOAD_TOKEN_TIMEOUT_MS) downloadTokens.delete(token);
     }
 }, 30 * 1000);
 
 app.listen(PORT, () => {
-    console.log(`KeyAuth proxy server running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
